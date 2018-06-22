@@ -1,18 +1,15 @@
-import {EventEmitter} from 'events';
+const {EventEmitter} = require('events');
 
 class MultiSigEvents extends EventEmitter {
 
 
-    private colonyClient;
-    private ms;
-    static jsonData = null;
-
-    constructor(_colonyClient){
-        super();
+    initialize(_colonyClient, _ms, _jsonData){
         this.colonyClient = _colonyClient;
+        this.ms = _ms;
+        MultiSigEvents.jsonData = _jsonData;
     }
 
-    startSetPayment = async (asyncFunc,taskId, source, amount) => {
+      async startSetPayment (asyncFunc,taskId, source, amount) {
         this.emit('startOperation');
         try{
             this.ms = this.colonyClient[asyncFunc].startOperation({taskId, source, amount});
@@ -22,23 +19,41 @@ class MultiSigEvents extends EventEmitter {
         }
     };
 
-    signOperation = async (asyncFunc) => {
+    async setTaskDueDate (taskId, dueDate) {
+        this.emit('startOperation');
+        console.log(taskId, dueDate.getTime());
+        this.ms = await this.colonyClient.setTaskDueDate.startOperation({taskId, dueDate});
+        this.emit('signatureRequired', this.ms);
+        return {missingSignees: this.ms.missingSignees}
+    }
+
+     async signOperation (asyncFunc)  {
         this.emit('signingStart');
         try{
             if(MultiSigEvents.jsonData)
                 this.ms = await this.colonyClient[asyncFunc]().restoreOperation(MultiSigEvents.jsonData);
             this.ms.refresh();
             this.ms.sign();
-            MultiSigEvents.jsonData = ms.toJSON();
-            this.emit('signingEnd', ms.toJSON());
+            MultiSigEvents.jsonData = this.ms.toJSON();
+            this.emit('signingEnd', MultiSigEvents.jsonData);
+            return {jsonRestore: MultiSigEvents.jsonData};
         } catch(err){
             this.emit('error', err);
         }
+         return {jsonRestore: {}};
     };
 
-    finalizeOperations = async () => {
-        const {success} = await this.ms.send();
-        this.emit('endOperation', success);
+     async finalizeOperations () {
+         try{
+             const {success} = await this.ms.send();
+             this.emit('endOperation', success);
+             return {success};
+         } catch (err) {
+             this.emit('error', err);
+         }
+
+         return {success: false};
+
     }
 }
 

@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="Generated files" type="javaScript">
+    <CLASSES>
+      <root url="file://$PROJECT_DIR$/dist/colony/MultiSigEvents.transpiled.js" />
+      <root url="file://$PROJECT_DIR$/dist/colony/MultiSigEvents.js" />
+      <root url="file://$PROJECT_DIR$/dist/colony/colony.js" />
+      <root url="file://$PROJECT_DIR$/dist/colony/ecp.js" />
+      <root url="file://$PROJECT_DIR$/dist/colony/index.js" />
+      <root url="file://$PROJECT_DIR$/dist/colony/task.js" />
+    </CLASSES>
+    <SOURCES />
+  </library>
+</component>
