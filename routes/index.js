@@ -3,8 +3,10 @@ const router = express.Router();
 const { TrufflepigLoader } = require('@colony/colony-js-contract-loader-http');
 const loader = new TrufflepigLoader();
 const {createNewColony, getColony} = require('../colony/colony');
-const {createNewTask, getCreatedTask, modifyTask, rateTask, submitTask, setTaskDueDate, currentBlockTime} = require('../colony/task');
+const {createNewTask, getCreatedTask, modifyTask, rateTask, submitTask} = require('../colony/task');
 const {MultiSigEvents} = require('../colony/MultiSigEvents');
+
+let MultiSig;
 
 
 router.get('/', function (req, res, next) {
@@ -129,18 +131,18 @@ router.post('/setDueDate', function (req, res, next) {
     const colonyAddress = req.body.colonyAddress || null;
     const colonyId = req.body.colonyId || null;
     const privateKey = req.body.privateKey;
-    const taskId = req.body.taskId;
+    const taskId = parseInt(req.body.taskId);
     const dueDate = new Date(`${req.body.dueDate}`);
     console.log(dueDate, req.body.dueDate);
     getColony(privateKey, colonyId, colonyAddress)
         .then(data => {
             const colonyClient = data[0];
             console.log("Got Colony");
-            const MultiSig = new MultiSigEvents();
+            MultiSig = new MultiSigEvents();
             MultiSig.initialize(colonyClient, null, null);
             console.log("Initialized Multisig");
             try{
-                setTaskDueDate(colonyClient, taskId, dueDate)
+                MultiSig.setTaskDueDate(taskId, dueDate)
                     .then(response => {
                         console.log(response);
                         res.json({status: 'ok', ...response});
@@ -161,27 +163,30 @@ router.post('/setDueDate', function (req, res, next) {
 });
 
 router.post('/signOperation', function (req, res, next) {
-    const colonyAddress = req.body.colonyAddress || null;
-    const colonyId = req.body.colonyId || null;
-    const privateKey = req.body.privateKey;
     const signTxn = req.body.functionName;
     const jsonRestore = req.body.restoreTxn || null;
 
-    getColony(privateKey, colonyId, colonyAddress)
-        .then(data => {
-            const colonyClient = data[0];
-            const MultiSig = new MultiSigEvents(colonyClient, null, jsonRestore);
-            MultiSig.signOperation(`${signTxn}`)
-                .then(response => res.json({response}))
-                .catch(error => {
-                    console.log(error);
-                    res.json({status: 'Error', error})
-                });
-        })
+    MultiSigEvents.jsonData = jsonRestore;
+    MultiSig.signOperation(`${signTxn}`)
+        .then(response => res.json({response}))
         .catch(error => {
             console.log(error);
             res.json({status: 'Error', error})
         });
+});
+
+router.get('/finalizeOperation', function (req, res, next) {
+    MultiSig.finalizeOperations()
+        .then(response => res.json({response}))
+        .catch(error => {
+            console.log(error);
+            res.json({status: 'Error', error})
+        });
+});
+
+router.get('/getMissingSignees', function (req, res, next) {
+    const missingSignees = MultiSig.getMissingSignees();
+    res.json({success: "OK", missingSignees});
 });
 
 module.exports = router;

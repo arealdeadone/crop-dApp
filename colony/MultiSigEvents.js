@@ -21,7 +21,7 @@ class MultiSigEvents extends EventEmitter {
 
     async setTaskDueDate (taskId, dueDate) {
         this.emit('startOperation');
-        console.log(taskId, dueDate.getTime());
+        console.log(taskId);
         this.ms = await this.colonyClient.setTaskDueDate.startOperation({taskId, dueDate});
         this.emit('signatureRequired', this.ms);
         return {missingSignees: this.ms.missingSignees}
@@ -31,7 +31,8 @@ class MultiSigEvents extends EventEmitter {
         this.emit('signingStart');
         try{
             if(MultiSigEvents.jsonData)
-                this.ms = await this.colonyClient[asyncFunc]().restoreOperation(MultiSigEvents.jsonData);
+                this.ms = await this.colonyClient[asyncFunc].restoreOperation(MultiSigEvents.jsonData);
+            console.log(this.ms.missingSignees);
             this.ms.refresh();
             this.ms.sign();
             MultiSigEvents.jsonData = this.ms.toJSON();
@@ -47,6 +48,7 @@ class MultiSigEvents extends EventEmitter {
          try{
              const {success} = await this.ms.send();
              this.emit('endOperation', success);
+             console.log(success);
              return {success};
          } catch (err) {
              this.emit('error', err);
@@ -54,6 +56,10 @@ class MultiSigEvents extends EventEmitter {
 
          return {success: false};
 
+    }
+
+    getMissingSignees(){
+         return this.ms.missingSignees;
     }
 }
 

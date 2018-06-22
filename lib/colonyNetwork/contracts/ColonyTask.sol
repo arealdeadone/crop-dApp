@@ -30,6 +30,13 @@ contract ColonyTask is ColonyStorage, DSMath {
   uint256 constant RATING_REVEAL_TIMEOUT = 432000;
 
   event TaskAdded(uint256 indexed id);
+  event TaskBriefChanged(uint256 indexed id, bytes32 specificationHash);
+  event TaskDueDateChanged(uint256 indexed id, uint256 dueDate);
+  event TaskDomainChanged(uint256 indexed id, uint256 domainId);
+  event TaskSkillChanged(uint256 indexed id, uint256 skillId);
+  event TaskRoleUserChanged(uint256 indexed id, uint8 role, address user);
+  event TaskFinalized(uint256 indexed id);
+  event TaskCanceled(uint256 indexed id);
 
   modifier confirmTaskRoleIdentity(uint256 _id, uint8 _role) {
     Role storage role = tasks[_id].roles[_role];
@@ -102,8 +109,8 @@ contract ColonyTask is ColonyStorage, DSMath {
   }
 
   modifier taskWorkRatingsAssigned(uint256 _id) {
-    require(tasks[_id].roles[WORKER].rated);
-    require(tasks[_id].roles[MANAGER].rated);
+    require(tasks[_id].roles[WORKER].rating != TaskRatings.None);
+    require(tasks[_id].roles[MANAGER].rating != TaskRatings.None);
     _;
   }
 
@@ -122,8 +129,8 @@ contract ColonyTask is ColonyStorage, DSMath {
     tasks[taskCount] = task;
     tasks[taskCount].roles[MANAGER] = Role({
       user: msg.sender,
-      rated: false,
-      rating: 0
+      rateFail: false,
+      rating: TaskRatings.None
     });
 
     pots[potCount].taskId = taskCount;
@@ -135,26 +142,8 @@ contract ColonyTask is ColonyStorage, DSMath {
     return taskCount;
   }
 
-  function getTaskChangeNonce() public view returns (uint256) {
-    return taskChangeNonce;
-  }
-
-  function getSignedMessageHash(uint256 _value, bytes _data, uint8 _mode) private returns (bytes32 txHash) {
-    bytes32 msgHash = keccak256(
-      address(this),
-      address(this),
-      _value,
-      _data,
-      taskChangeNonce
-    );
-    if (_mode==0) {
-      // 'Normal' mode - geth, etc.
-      return keccak256("\x19Ethereum Signed Message:\n32", msgHash);
-    } else {
-      // Trezor mode
-      // Correct incantation helpfully cribbed from https://github.com/trezor/trezor-mcu/issues/163#issuecomment-368435292
-      return keccak256("\x19Ethereum Signed Message:\n\x20", msgHash);
-    }
+  function getTaskChangeNonce(uint256 _id) public view returns (uint256) {
+    return taskChangeNonces[_id];
   }
 
   function executeTaskChange(
@@ -166,33 +155,59 @@ contract ColonyTask is ColonyStorage, DSMath {
     bytes _data) public
   {
     require(_value == 0);
-    // Allow for 2 reviewers
-    require(_sigR.length == 2);
     require(_sigR.length == _sigS.length && _sigR.length == _sigV.length);
 
     bytes4 sig;
     uint256 taskId;
     (sig, taskId) = deconstructCall(_data);
-    Task storage task = tasks[taskId];
-    require(!task.finalized);
+    require(!tasks[taskId].finalized);
 
-    uint8[2] storage _reviewers = reviewers[sig];
-    uint8 r1 = _reviewers[0];
-    uint8 r2 = _reviewers[1];
-    // Prevent calls to non registered /arbitrary function on the contract
-    // Checks at least one of the two reviewers registered is different to the task manager
-    require(r1 != MANAGER || r2 != MANAGER);
+    uint8 nSignaturesRequired;
+    if (tasks[taskId].roles[reviewers[sig][0]].user == address(0) || tasks[taskId].roles[reviewers[sig][1]].user == address(0)) {
+      // When one of the roles is not set, allow the other one to execute a change with just their signature
+      nSignaturesRequired = 1;
+    } else if (tasks[taskId].roles[reviewers[sig][0]].user == tasks[taskId].roles[reviewers[sig][1]].user) {
+      // We support roles being assumed by the same user, in this case, allow them to execute a change with just their signature
+      nSignaturesRequired = 1;
+    } else {
+      nSignaturesRequired = 2;
+    }
+    
+    require(_sigR.length == nSignaturesRequired);
 
-    address[] memory reviewerAddresses = new address[](2);
-    for (uint i = 0; i < 2; i++) {
-      reviewerAddresses[i] = ecrecover(getSignedMessageHash(_value, _data, _mode[i]), _sigV[i], _sigR[i], _sigS[i]);
+    bytes32 msgHash = keccak256(abi.encodePacked(address(this), address(this), _value, _data, taskChangeNonces[taskId]));
+    address[] memory reviewerAddresses = new address[](nSignaturesRequired);
+    for (uint i = 0; i < nSignaturesRequired; i++) {
+      // 0 'Normal' mode - geth, etc. 
+      // >0 'Trezor' mode
+      // Correct incantation helpfully cribbed from https://github.com/trezor/trezor-mcu/issues/163#issuecomment-368435292
+      bytes32 txHash;
+      if (_mode[i] == 0) {
+        txHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", msgHash));
+      } else {
+        txHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n\x20", msgHash));
+      }
+    
+      reviewerAddresses[i] = ecrecover(txHash, _sigV[i], _sigR[i], _sigS[i]);
     }
 
-    require(task.roles[r1].user == reviewerAddresses[0] || task.roles[r1].user == reviewerAddresses[1]);
-    require(task.roles[r2].user == reviewerAddresses[0] || task.roles[r2].user == reviewerAddresses[1]);
+    require(reviewerAddresses[0] == tasks[taskId].roles[reviewers[sig][0]].user || reviewerAddresses[0] == tasks[taskId].roles[reviewers[sig][1]].user);
+    
+    if (nSignaturesRequired == 2) {
+      require(reviewerAddresses[0] != reviewerAddresses[1]);
+      require(reviewerAddresses[1] == tasks[taskId].roles[reviewers[sig][0]].user || reviewerAddresses[1] == tasks[taskId].roles[reviewers[sig][1]].user);
+    }
+    
+    taskChangeNonces[taskId]++;
+    require(executeCall(address(this), _value, _data));
+  }
 
-    taskChangeNonce = taskChangeNonce + 1;
-    require(address(this).call.value(_value)(_data));
+  // The address.call() syntax is no longer recommended, see:
+  // https://github.com/ethereum/solidity/issues/2884
+  function executeCall(address to, uint256 value, bytes data) internal returns (bool success) {
+    assembly {
+      success := call(gas, to, value, add(data, 0x20), mload(data), 0, 0)
+      }
   }
 
   function submitTaskWorkRating(uint256 _id, uint8 _role, bytes32 _ratingSecret) public
@@ -213,34 +228,34 @@ contract ColonyTask is ColonyStorage, DSMath {
     bytes32 ratingSecret = generateSecret(_salt, _rating);
     require(ratingSecret == taskWorkRatings[_id].secret[_role]);
 
-    Role storage role = tasks[_id].roles[_role];
-    role.rated = true;
-    role.rating = _rating;
+    TaskRatings rating = TaskRatings(_rating);
+    require(rating != TaskRatings.None, "Cannot rate None!");
+    tasks[_id].roles[_role].rating = rating;
   }
 
   // In the event of a user not committing or revealing within the 10 day rating window,
   // their rating of their counterpart is assumed to be the highest possible
-  // and their own rating is decreased by 5 (e.g. 0.5 points)
+  // and they will receive a reputation penalty
   function assignWorkRating(uint256 _id) public
   taskWorkRatingsClosed(_id)
   {
     Role storage managerRole = tasks[_id].roles[MANAGER];
     Role storage workerRole = tasks[_id].roles[WORKER];
+    Role storage evaluatorRole = tasks[_id].roles[EVALUATOR];
 
-    if (!workerRole.rated) {
-      workerRole.rated = true;
-      workerRole.rating = 50;
+    if (workerRole.rating == TaskRatings.None) {
+      evaluatorRole.rateFail = true;
+      workerRole.rating = TaskRatings.Excellent;
     }
 
-    if (!managerRole.rated) {
-      managerRole.rated = true;
-      managerRole.rating = 50;
-      workerRole.rating = (workerRole.rating > 5) ? (workerRole.rating - 5) : 0;
+    if (managerRole.rating == TaskRatings.None) {
+      workerRole.rateFail = true;
+      managerRole.rating = TaskRatings.Excellent;
     }
   }
 
   function generateSecret(bytes32 _salt, uint256 _value) public pure returns (bytes32) {
-    return keccak256(_salt, _value);
+    return keccak256(abi.encodePacked(_salt, _value));
   }
 
   function getTaskWorkRatings(uint256 _id) public view returns (uint256, uint256) {
@@ -257,11 +272,14 @@ contract ColonyTask is ColonyStorage, DSMath {
   taskExists(_id)
   taskNotFinalized(_id)
   {
+    require(tasks[_id].roles[MANAGER].user == msg.sender);
     tasks[_id].roles[_role] = Role({
       user: _user,
-      rated: false,
-      rating: 0
+      rateFail: false,
+      rating: TaskRatings.None
     });
+
+    emit TaskRoleUserChanged(_id, _role, _user);
   }
 
   function setTaskDomain(uint256 _id, uint256 _domainId) public
@@ -269,7 +287,10 @@ contract ColonyTask is ColonyStorage, DSMath {
   taskNotFinalized(_id)
   domainExists(_domainId)
   {
+    require(tasks[_id].roles[MANAGER].user == msg.sender);
     tasks[_id].domainId = _domainId;
+
+    emit TaskDomainChanged(_id, _domainId);
   }
 
   // TODO: Restrict function visibility to whoever submits the approved Transaction from Client
@@ -280,7 +301,11 @@ contract ColonyTask is ColonyStorage, DSMath {
   skillExists(_skillId)
   globalSkill(_skillId)
   {
+    require(tasks[_id].roles[MANAGER].user == msg.sender);
+
     tasks[_id].skills[0] = _skillId;
+
+    emit TaskSkillChanged(_id, _skillId);
   }
 
   function setTaskBrief(uint256 _id, bytes32 _specificationHash) public
@@ -289,6 +314,8 @@ contract ColonyTask is ColonyStorage, DSMath {
   taskNotFinalized(_id)
   {
     tasks[_id].specificationHash = _specificationHash;
+
+    emit TaskBriefChanged(_id, _specificationHash);
   }
 
   function setTaskDueDate(uint256 _id, uint256 _dueDate) public
@@ -297,6 +324,8 @@ contract ColonyTask is ColonyStorage, DSMath {
   taskNotFinalized(_id)
   {
     tasks[_id].dueDate = _dueDate;
+
+    emit TaskDueDateChanged(_id, _dueDate);
   }
 
   function submitTaskDeliverable(uint256 _id, bytes32 _deliverableHash) public
@@ -321,24 +350,25 @@ contract ColonyTask is ColonyStorage, DSMath {
     task.finalized = true;
 
     for (uint8 roleId = 0; roleId <= 2; roleId++) {
-      uint payout = task.payouts[roleId][token];
       Role storage role = task.roles[roleId];
+      TaskRatings rating = (roleId == EVALUATOR) ? TaskRatings.Satisfactory : role.rating;
+      uint payout = task.payouts[roleId][token];
 
-      uint8 rating = (roleId == EVALUATOR) ? 50 : role.rating;
-      uint8 divider = (roleId == WORKER) ? 30 : 50;
+      int reputation = getReputation(int(payout), uint8(rating), role.rateFail);
 
-      int reputation = SafeMath.mulInt(int(payout), (int(rating)*2 - 50)) / divider;
       colonyNetworkContract.appendReputationUpdateLog(role.user, reputation, domains[task.domainId].skillId);
 
       if (roleId == WORKER) {
         colonyNetworkContract.appendReputationUpdateLog(role.user, reputation, task.skills[0]);
 
-        if (rating <= 20) {
+        if (rating == TaskRatings.Unsatisfactory) {
           task.payouts[roleId][token] = 0;
           task.totalPayouts[token] = sub(task.totalPayouts[token], payout);
         }
       }
     }
+
+    emit TaskFinalized(_id);
   }
 
   function cancelTask(uint256 _id) public
@@ -347,6 +377,8 @@ contract ColonyTask is ColonyStorage, DSMath {
   taskNotFinalized(_id)
   {
     tasks[_id].cancelled = true;
+
+    emit TaskCanceled(_id);
   }
 
   function getTask(uint256 _id) public view returns (bytes32, bytes32, bool, bool, uint256, uint256, uint256, uint256, uint256, uint256[]) {
@@ -356,7 +388,19 @@ contract ColonyTask is ColonyStorage, DSMath {
 
   function getTaskRole(uint256 _id, uint8 _role) public view returns (address, bool, uint8) {
     Role storage role = tasks[_id].roles[_role];
-    return (role.user, role.rated, role.rating);
+    return (role.user, role.rateFail, uint8(role.rating));
+  }
+
+  function getReputation(int payout, uint8 rating, bool rateFail) internal pure returns(int reputation) {
+    require(rating > 0 && rating <= 3, "Invalid rating");
+
+    // -1, 1, 1.5 multipliers, -0.5 penalty
+    int8[3] memory ratingMultipliers = [-2, 2, 3];
+    int8 ratingDivisor = 2;
+
+    reputation = SafeMath.mulInt(payout, ratingMultipliers[rating - 1]);
+    reputation = SafeMath.subInt(reputation, rateFail ? payout : 0); // Deduct penalty for not rating
+    reputation /= ratingDivisor; // We may lose one atom of reputation here :sad:
   }
 
   // Get the function signature and task id from the transaction bytes data

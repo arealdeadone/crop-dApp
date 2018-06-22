@@ -34,7 +34,7 @@ contract ColonyStorage is DSAuth {
 
   // Mapping function signature to 2 task roles whose approval is needed to execute
   mapping (bytes4 => uint8[2]) reviewers;
-  uint256 taskChangeNonce;
+  uint256 taskChangeNonce; // Made obsolete in #203
 
   mapping (uint256 => Task) tasks;
 
@@ -86,6 +86,9 @@ contract ColonyStorage is DSAuth {
   uint8 constant EVALUATOR = 1;
   uint8 constant WORKER = 2;
 
+  // Mapping task id to current "active" nonce for executing task changes
+  mapping (uint256 => uint256) taskChangeNonces;
+
   struct Task {
     bytes32 specificationHash;
     bytes32 deliverableHash;
@@ -106,13 +109,15 @@ contract ColonyStorage is DSAuth {
     mapping (uint256 => mapping (address => uint256)) payouts;
   }
 
+  enum TaskRatings { None, Unsatisfactory, Satisfactory, Excellent }
+
   struct Role {
     // Address of the user for the given role
     address user;
-    // Has the user work been rated
-    bool rated;
+    // Whether the user failed to submit their rating
+    bool rateFail;
     // Rating the user received
-    uint8 rating;
+    TaskRatings rating;
   }
 
   struct RatingSecrets {

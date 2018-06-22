@@ -27,6 +27,46 @@ contract IColony {
   /// @param id The newly added task id
   event TaskAdded(uint256 indexed id);
 
+  /// @notice Event logged when a task's specification hash changes
+  /// @param id Id of the task
+  /// @param specificationHash New specification hash of the task
+  event TaskBriefChanged(uint256 indexed id, bytes32 specificationHash);
+
+  /// @notice Event logged when a task's due date changes
+  /// @param id Id of the task
+  /// @param dueDate New due date of the task
+  event TaskDueDateChanged(uint256 indexed id, uint256 dueDate);
+
+  /// @notice Event logged when a task's domain changes
+  /// @param id Id of the task
+  /// @param domainId New domain id of the task
+  event TaskDomainChanged(uint256 indexed id, uint256 domainId);
+
+  /// @notice Event logged when a task's skill changes
+  /// @param id Id of the task
+  /// @param skillId New skill id of the task
+  event TaskSkillChanged(uint256 indexed id, uint256 skillId);
+
+  /// @notice Event logged when a task's role user changes
+  /// @param id Id of the task
+  /// @param role Role of the user
+  /// @param user User that fulfills the designated role
+  event TaskRoleUserChanged(uint256 indexed id, uint8 role, address user);
+
+  /// @notice Event logged when a task's worker funding changes
+  /// @param id Id of the task
+  /// @param token Token of the payout funding
+  /// @param amount Amount of the payout funding
+  event TaskWorkerPayoutChanged(uint256 indexed id, address token, uint256 amount);
+
+  /// @notice Event logged when a task has been finalized
+  /// @param id Id of the finalized task
+  event TaskFinalized(uint256 indexed id);
+
+  /// @notice Event logged when a task has been canceled
+  /// @param id Id of the canceled task
+  event TaskCanceled(uint256 indexed id);
+
   /// @notice Event logged when a new reward payout cycle has started
   /// @param id Payout id
   event RewardPayoutCycleStarted(uint256 indexed id);
@@ -121,13 +161,14 @@ contract IColony {
   function getTaskCount() public view returns (uint256);
 
   /// @notice Starts from 0 and is incremented on every co-reviewed task change via `executeTaskChange` call
+  /// @param _id Id of the task
   /// @return The current task change nonce value
-  function getTaskChangeNonce() public view returns (uint256);
+  function getTaskChangeNonce(uint256 _id) public view returns (uint256);
 
   /// @notice Executes a task update transaction `_data` which is approved and signed by two of its roles (e.g. manager and worker)
   /// using the detached signatures for these users.
   /// @dev The Colony functions which require approval and the task roles to review these are set in `IColony.initialiseColony` at colony creation
-  /// Upon successful execution the `taskChangeNonce` is incremented
+  /// Upon successful execution the `taskChangeNonces` entry for the task is incremented
   /// @param _sigV recovery id
   /// @param _sigR r output of the ECDSA signature of the transaction
   /// @param _sigS s output of the ECDSA signature of the transaction
@@ -247,7 +288,7 @@ contract IColony {
   /// @param _id Id of the task
   /// @param _role Id of the role, as defined in `ColonyStorage` `MANAGER`, `EVALUATOR` and `WORKER` constants
   /// @return Address of the user for the given role
-  /// @return Has the user work been rated
+  /// @return Whether the user failed to rate their counterpart
   /// @return Rating the user received
   function getTaskRole(uint256 _id, uint8 _role) public view returns (address, bool, uint8);
 

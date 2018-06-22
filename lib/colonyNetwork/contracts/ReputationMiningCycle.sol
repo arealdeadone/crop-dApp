@@ -144,7 +144,7 @@ contract ReputationMiningCycle is PatriciaTreeProofs, DSMath {
   }
 
   function getEntryHash(address submitter, uint256 entryIndex, bytes32 newHash) public pure returns (bytes32) {
-    return keccak256(submitter, entryIndex, newHash);
+    return keccak256(abi.encodePacked(submitter, entryIndex, newHash));
   }
 
   /// @notice Constructor for this contract.
@@ -633,9 +633,18 @@ contract ReputationMiningCycle is PatriciaTreeProofs, DSMath {
       u[U_REQUIRE_REPUTATION_CHECK] = 1;
     }
 
-    // TODO: Is this safe? I think so, because even if there's over/underflows, they should
-    // still be the same number.
-    require(int(agreeStateReputationValue)+reputationUpdateLog[reputationTransitionIdx].amount == int(disagreeStateReputationValue));
+    // We don't care about underflows for the purposes of comparison, but for the calculation we deem 'correct'.
+    // i.e. a reputation can't be negative.
+    if (reputationUpdateLog[reputationTransitionIdx].amount < 0 && uint(reputationUpdateLog[reputationTransitionIdx].amount * -1) > agreeStateReputationValue ) {
+      require(disagreeStateReputationValue == 0);
+    } else if (uint(reputationUpdateLog[reputationTransitionIdx].amount) + agreeStateReputationValue < agreeStateReputationValue) {
+      // We also don't allow reputation to overflow
+      require(disagreeStateReputationValue == 2**256 - 1);
+    } else {
+      // TODO: Is this safe? I think so, because even if there's over/underflows, they should
+      // still be the same number.
+      require(int(agreeStateReputationValue)+reputationUpdateLog[reputationTransitionIdx].amount == int(disagreeStateReputationValue));
+    }
   }
 
   function checkPreviousReputationInState(

@@ -1,9 +1,7 @@
 const ecp =  require('./ecp');
-const BigNumber =  require('ethers/utils/bignumber').bigNumberify;
-const randomBytes = require('crypto').randomBytes;
 const web3Utils = require('web3-utils');
 const Web3 = require('web3');
-// const getRandomString = require('./helper').getRandomString;
+
 
 const createNewTask = async (colonyClient, taskSpecification) => {
 
@@ -64,20 +62,19 @@ const getCreatedTask = async (colonyClient, taskId) => {
 };
 
 const rateTask = async (colonyClient, taskId, rating, role) => {
-    await ecp.init();
-    let salt = web3Utils.soliditySha3("abcdefghij");
-    salt = `${salt}`;
-    console.log(salt);
-    rating = BigNumber(rating);
-    let ratingSecret = await colonyClient.generateSecret.call({salt, value: rating});
+    let salt = web3Utils.soliditySha3("aaaaaaaaaa");
+    let ratingSecret;
+    try{
+        ratingSecret = await colonyClient.generateSecret.call({salt, value: rating});
+    } catch (err) {
+        console.log(err.message);
+    }
     console.log(ratingSecret);
-    ratingSecret = `${ratingSecret}`;
     await colonyClient.submitTaskWorkRating.send({
         taskId,
         role,
-        ratingSecret
+        secret: ratingSecret.secret
     });
-    ecp.stop();
     return {taskId, rating, role};
 };
 
@@ -86,26 +83,8 @@ const submitTask = async (colonyClient, taskId, taskDeliverable) => {
     const deliverableHash = await ecp.saveTaskSpecification(taskDeliverable);
     console.log(deliverableHash);
     await colonyClient.submitTaskDeliverable.send({taskId, deliverableHash});
+    ecp.stop();
     return {taskId, taskDeliverable, deliverableHash};
 };
 
-const setTaskDueDate = async (colonyClient, taskId, dueDate) => {
-    console.log(taskId, dueDate);
-    const ms = await colonyClient.setTaskDueDate.startOperation({taskId, dueDate});
-    return {missingSignees: ms.missingSignees}
-};
-
-async function currentBlockTime() {
-    const web3 = new Web3(new Web3.providers.HttpProvider("http://localhost:8545"));
-    const p = new Promise((resolve, reject) => {
-        web3.eth.getBlock("latest", (err, res) => {
-            if (err) {
-                return reject(err);
-            }
-            return resolve(res.timestamp);
-        });
-    });
-    return p;
-}
-
-module.exports = {createNewTask, modifyTask, getCreatedTask, rateTask, submitTask, setTaskDueDate, currentBlockTime};
+module.exports = {createNewTask, modifyTask, getCreatedTask, rateTask, submitTask};
